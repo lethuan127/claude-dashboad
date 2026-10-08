@@ -1,0 +1,1 @@
+{"type":"assistant","sessionId":"s3","timestamp":"2025-10-01T08:00:00.000Z","cwd":"/home/me/beta","gitBranch":"main","message":{"model":"claude-mystery-9","usage":{"input_tokens":500,"output_tokens":500}}}
