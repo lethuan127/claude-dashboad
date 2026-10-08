@@ -6,7 +6,9 @@ import { computeCost } from "./cost";
 import type {
   DailyModelTotals,
   ProjectSummary,
+  SessionDetail,
   SessionSummary,
+  SessionTurn,
   TokenCounts,
   UsageReport,
 } from "./types";
@@ -101,6 +103,7 @@ export async function readUsage(
     const proj: ProjectSummary = {
       project,
       sessionCount: 0,
+      lastActive: null,
       ...zero(),
       cost: 0,
       hasUnknownModel: false,
@@ -172,6 +175,11 @@ export async function readUsage(
       proj.sessionCount++;
       add(proj, session);
       proj.cost += session.cost;
+      if (
+        session.lastTimestamp &&
+        (!proj.lastActive || session.lastTimestamp > proj.lastActive)
+      )
+        proj.lastActive = session.lastTimestamp;
       proj.hasUnknownModel ||= session.hasUnknownModel;
     }
     projects.push(proj);
@@ -181,4 +189,76 @@ export async function readUsage(
     (a, b) => a.date.localeCompare(b.date) || a.model.localeCompare(b.model),
   );
   return { sessions, projects, daily, unknownModels: [...unknown].sort() };
+}
+
+/**
+ * Reads one session's per-turn usage (one row per assistant message).
+ * The id is only compared against log contents, never used as a path.
+ * Returns null if no session has that id.
+ */
+export async function readSession(
+  id: string,
+  claudeDir: string = getClaudeDir(),
+): Promise<SessionDetail | null> {
+  const projectsDir = path.join(claudeDir, "projects");
+  for (const project of await readDirNames(projectsDir)) {
+    const projDir = path.join(projectsDir, project);
+    let files: string[] = [];
+    try {
+      files = (await fs.readdir(projDir)).filter((f) => f.endsWith(".jsonl")).sort();
+    } catch {}
+    for (const file of files) {
+      let text: string;
+      try {
+        text = await fs.readFile(path.join(projDir, file), "utf8");
+      } catch {
+        continue;
+      }
+      const entries = text.split("\n").map(parseLine).filter((e) => e !== null);
+      if (entries.length === 0) continue;
+      // Same id rule as readUsage: first entry's sessionId, else file name.
+      if ((entries[0].sessionId ?? file.replace(/\.jsonl$/, "")) !== id) continue;
+
+      const session: SessionSummary = {
+        id,
+        project,
+        cwd: null,
+        gitBranch: null,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        models: [],
+        messageCount: entries.length,
+        ...zero(),
+        cost: 0,
+        hasUnknownModel: false,
+      };
+      const models = new Set<string>();
+      const turns: SessionTurn[] = [];
+      for (const e of entries) {
+        session.cwd ??= e.cwd;
+        session.gitBranch ??= e.gitBranch;
+        if (e.timestamp) {
+          if (!session.firstTimestamp || e.timestamp < session.firstTimestamp)
+            session.firstTimestamp = e.timestamp;
+          if (!session.lastTimestamp || e.timestamp > session.lastTimestamp)
+            session.lastTimestamp = e.timestamp;
+        }
+        models.add(e.model);
+        add(session, e.tokens);
+        const c = computeCost(e.model, e.tokens);
+        if (c === null) session.hasUnknownModel = true;
+        else session.cost += c;
+        turns.push({
+          timestamp: e.timestamp,
+          model: e.model,
+          ...e.tokens,
+          cost: c ?? 0,
+          hasUnknownModel: c === null,
+        });
+      }
+      session.models = [...models].sort();
+      return { session, turns };
+    }
+  }
+  return null;
 }

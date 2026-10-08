@@ -28,6 +28,8 @@ export interface ProjectSummary extends TokenCounts, CostInfo {
   /** Folder name under projects/. */
   project: string;
   sessionCount: number;
+  /** Latest session lastTimestamp in the project, or null. */
+  lastActive: string | null;
 }
 
 export interface DailyModelTotals extends TokenCounts, CostInfo {
@@ -41,4 +43,15 @@ export interface UsageReport {
   projects: ProjectSummary[];
   daily: DailyModelTotals[];
   unknownModels: string[];
+}
+
+export interface SessionTurn extends TokenCounts, CostInfo {
+  timestamp: string | null;
+  model: string;
+}
+
+export interface SessionDetail {
+  session: SessionSummary;
+  /** One row per assistant message, in file order. */
+  turns: SessionTurn[];
 }

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { computeCost } from "./cost";
-import { readUsage } from "./reader";
+import { readSession, readUsage } from "./reader";
 
 const FIXTURES = path.join(__dirname, "__fixtures__");
 
@@ -77,5 +77,48 @@ describe("readUsage", () => {
     expect(s3.hasUnknownModel).toBe(true);
     expect(r.projects.find((p) => p.project === "-home-me-beta")!.hasUnknownModel).toBe(true);
     expect(r.daily.find((d) => d.model === "claude-mystery-9")!.hasUnknownModel).toBe(true);
+  });
+});
+
+describe("readSession", () => {
+  it("returns one turn per assistant message", async () => {
+    const d = (await readSession("s1", FIXTURES))!;
+    expect(d.session.gitBranch).toBe("main");
+    expect(d.session.firstTimestamp).toBe("2025-10-01T10:00:00.000Z");
+    expect(d.session.lastTimestamp).toBe("2025-10-02T09:00:00.000Z");
+    expect(d.turns).toHaveLength(2);
+    expect(d.turns[0]).toMatchObject({
+      timestamp: "2025-10-01T10:00:00.000Z",
+      model: "claude-sonnet-4-5-20250929",
+      inputTokens: 1_000_000,
+      outputTokens: 100_000,
+      cacheCreationTokens: 200_000,
+      cacheReadTokens: 500_000,
+      hasUnknownModel: false,
+    });
+    expect(d.turns[0].cost).toBeCloseTo(5.4, 6);
+    expect(d.turns[1].inputTokens).toBe(10);
+    expect(d.session.cost).toBeCloseTo(d.turns[0].cost + d.turns[1].cost, 9);
+  });
+
+  it("lists several models and flags unknown ones", async () => {
+    const s2 = (await readSession("s2", FIXTURES))!;
+    expect(s2.session.models).toEqual(["claude-haiku-4-5", "claude-opus-4-5"]);
+    const s3 = (await readSession("s3", FIXTURES))!;
+    expect(s3.turns[0]).toMatchObject({ cost: 0, hasUnknownModel: true });
+  });
+
+  it("returns null for unknown ids, including path-like ones", async () => {
+    expect(await readSession("nope", FIXTURES)).toBeNull();
+    expect(await readSession("../../etc/passwd", FIXTURES)).toBeNull();
+  });
+});
+
+describe("project lastActive", () => {
+  it("is the newest session lastTimestamp", async () => {
+    const r = await readUsage(FIXTURES);
+    expect(r.projects.find((p) => p.project === "-home-me-alpha")!.lastActive).toBe(
+      "2025-10-02T09:00:00.000Z",
+    );
   });
 });
